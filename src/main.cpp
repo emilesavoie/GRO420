@@ -18,9 +18,12 @@ mais je suis nul avec FreeRTOS... Bonne chance!
 
 */
 
+#define EVER ;;
+
 using Sawtooth = Oscil<SAW2048_NUM_CELLS, SAMPLE_RATE>;
 using SquareWv = Oscil<SQUARE_NO_ALIAS_2048_NUM_CELLS, SAMPLE_RATE>;
 
+#define PIN_SIG 22
 #define PIN_SW1 2
 #define PIN_SW2 3
 #define PIN_RV1 A0
@@ -33,10 +36,12 @@ Sawtooth sawtooth_;
 
 float f = 1.0;
 float q = 0.5;
-float fb = (q + (q/(1.0-f)));
-int16_t b1 = f*f * 256;
-int16_t a1 = (2-2*f+f*fb-f*f*fb) * 256;
-int16_t a2 = -(1-2*f+f*fb+f*f-f*f*fb) * 256;
+float fb = (q + (q / (1.0 - f)));
+int16_t b1 = f * f * 256;
+int16_t a1 = (2 - 2 * f + f * fb - f * f * fb) * 256;
+int16_t a2 = -(1 - 2 * f + f * fb + f * f - f * f * fb) * 256;
+
+// const TickType_t xDelay = 50 / portTICK_PERIOD_MS;
 
 void setNoteHz(float note)
 {
@@ -46,28 +51,28 @@ void setNoteHz(float note)
 
 int8_t processVCF(int8_t input)
 {
-  static int8_t y1 = 0;
-  static int8_t y2 = 0;
+    static int8_t y1 = 0;
+    static int8_t y2 = 0;
 
-  int16_t y0 = b1 * input + a1 * y1 + a2 * y2;
+    int16_t y0 = b1 * input + a1 * y1 + a2 * y2;
 
-  int8_t output = 0xFF & (y0 >> 8);
+    int8_t output = 0xFF & (y0 >> 8);
 
-  y2 = y1;
-  y1 = output;
+    y2 = y1;
+    y1 = output;
 
-  return output;
+    return output;
 }
 
 int8_t nextSample()
 {
     // VCO
     int8_t vco = sawtooth_.next() + squarewv_.next();
-    
+
     // VCF (disabled)
     int8_t vcf = vco;
 
-    // VCA (disabled)   
+    // VCA (disabled)
     int8_t vca = vcf;
 
     int8_t output = vca;
@@ -75,24 +80,74 @@ int8_t nextSample()
     return output;
 }
 
+void blinkFreq(void *pvParameters __attribute__((unused)))
+{
+    for (EVER)
+    {
+        digitalWrite(PIN_SIG, HIGH);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+
+        digitalWrite(PIN_SIG, LOW);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+}
+
+void blinkLed(void *pvParameters __attribute__((unused)))
+{
+    for (EVER)
+    {
+        digitalWrite(LED_BUILTIN, HIGH);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+
+        digitalWrite(LED_BUILTIN, LOW);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
+
+void buffer(void *pvParameters __attribute__((unused)))
+{
+    for (EVER)
+    {
+        if (!pcmBufferFull())
+        {
+            pcmAddSample(nextSample());
+        }
+        else
+        {
+            taskYIELD();
+        }
+    }
+}
+
 void setup()
 {
     pinMode(LED_BUILTIN, OUTPUT);
     pinMode(PIN_SW1, INPUT);
-    
+    pinMode(PIN_SIG, OUTPUT);
+
     Serial.begin(9600);
 
     // Oscillator.
     squarewv_ = SquareWv(SQUARE_NO_ALIAS_2048_DATA);
     sawtooth_ = SquareWv(SAW2048_DATA);
-    setNoteHz(110.0);
+    setNoteHz(440.0);
 
     pcmSetup();
 
-    Serial.println("Synth prototype ready");
+    xTaskCreate(
+        buffer,
+        "buffer",
+        256,
+        NULL,
+        1,
+        NULL);
 }
 
 void loop()
-{    
+{
+    // digitalWrite(LED_BUILTIN, HIGH);
+    // delay(500);
 
+    // digitalWrite(LED_BUILTIN, LOW);
+    // delay(500);
 }
