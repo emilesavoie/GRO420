@@ -4,6 +4,8 @@
 #include <tables/saw2048_int8.h>
 #include <tables/square_no_alias_2048_int8.h>
 
+#include <event_groups.h>
+
 #include "pcm_audio.hpp"
 
 /*
@@ -18,7 +20,11 @@ mais je suis nul avec FreeRTOS... Bonne chance!
 
 */
 
-#define EVER ;;
+// Use queue for F and Q variable
+
+#define EVER \
+    ;        \
+    ;
 
 using Sawtooth = Oscil<SAW2048_NUM_CELLS, SAMPLE_RATE>;
 using SquareWv = Oscil<SQUARE_NO_ALIAS_2048_NUM_CELLS, SAMPLE_RATE>;
@@ -34,6 +40,10 @@ using SquareWv = Oscil<SQUARE_NO_ALIAS_2048_NUM_CELLS, SAMPLE_RATE>;
 SquareWv squarewv_;
 Sawtooth sawtooth_;
 
+TaskHandle_t taskHandle_ = NULL;
+
+EventGroupHandle_t eventGroup_;
+
 float f = 1.0;
 float q = 0.5;
 float fb = (q + (q / (1.0 - f)));
@@ -41,7 +51,7 @@ int16_t b1 = f * f * 256;
 int16_t a1 = (2 - 2 * f + f * fb - f * f * fb) * 256;
 int16_t a2 = -(1 - 2 * f + f * fb + f * f - f * f * fb) * 256;
 
-// const TickType_t xDelay = 50 / portTICK_PERIOD_MS;
+uint32_t notifValue;
 
 void setNoteHz(float note)
 {
@@ -119,11 +129,43 @@ void buffer(void *pvParameters __attribute__((unused)))
     }
 }
 
+void waitNotify(void *pvParameters __attribute__((unused)))
+{
+    for (EVER)
+    {
+        xTaskNotifyWait(
+            0,
+            0x00,
+            &notifValue,
+            portMAX_DELAY);
+
+        Serial.println("Task has awoken");
+    }
+}
+
+void eventWait(void *pvParameters __attribute__((unused)))
+{
+    for(EVER)
+    {
+
+    }
+}
+
+void isr()
+{
+    if (taskHandle_ != NULL)
+    {
+        xTaskNotify(taskHandle_, 0, eNoAction);
+    }
+}
+
 void setup()
 {
     pinMode(LED_BUILTIN, OUTPUT);
     pinMode(PIN_SW1, INPUT);
     pinMode(PIN_SIG, OUTPUT);
+
+    attachInterrupt(digitalPinToInterrupt(PIN_SW1), isr, FALLING);
 
     Serial.begin(9600);
 
@@ -134,6 +176,8 @@ void setup()
 
     pcmSetup();
 
+    eventGroup_ = xEventGroupCreate();
+
     xTaskCreate(
         buffer,
         "buffer",
@@ -141,13 +185,26 @@ void setup()
         NULL,
         1,
         NULL);
+
+    xTaskCreate(
+        waitNotify,
+        "waitNotify",
+        256,
+        NULL,
+        1,
+        &taskHandle_);
+
+    xTaskCreate(
+        eventWait,
+        "eventWait",
+        256,
+        NULL,
+        1,
+        NULL
+    );
+
 }
 
 void loop()
 {
-    // digitalWrite(LED_BUILTIN, HIGH);
-    // delay(500);
-
-    // digitalWrite(LED_BUILTIN, LOW);
-    // delay(500);
 }
