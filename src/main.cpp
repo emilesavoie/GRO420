@@ -41,7 +41,7 @@ using SquareWv = Oscil<SQUARE_NO_ALIAS_2048_NUM_CELLS, SAMPLE_RATE>;
 SquareWv squarewv_;
 Sawtooth sawtooth_;
 
-TaskHandle_t buttonTaskHandle_ = NULL;
+TaskHandle_t buttonTaskHandle = NULL;
 TaskHandle_t bufferTaskHandle = NULL;
 
 QueueHandle_t freqQueue;
@@ -49,14 +49,8 @@ QueueHandle_t tempoQueue;
 QueueHandle_t coupureQueue;
 QueueHandle_t vcaLengthQueue;
 
-EventGroupHandle_t eventGroup_;
-
-// float f = 1.0;
-// float q = 0.5;
-// float fb = (q + (q / (1.0 - f)));
-// int16_t b1 = f * f * 256;
-// int16_t a1 = (2 - 2 * f + f * fb - f * f * fb) * 256;
-// int16_t a2 = -(1 - 2 * f + f * fb + f * f - f * f * fb) * 256;
+QueueHandle_t sw1Queue;
+QueueHandle_t sw2Queue;
 
 uint32_t notifValue;
 
@@ -92,16 +86,52 @@ int8_t processVCF(int8_t input)
     return output;
 }
 
+int8_t processVca(int8_t input)
+{
+    float currentVcaLength;
+    xQueuePeek(vcaLengthQueue, &currentVcaLength, portMAX_DELAY);
+    float bufferIterations = currentVcaLength * SAMPLE_RATE;
+
+    static float iteration = bufferIterations;
+    int8_t frequencyOutput;
+
+    int sw1State;
+    int sw2State;
+
+    xQueuePeek(sw1Queue, &sw1State, portMAX_DELAY);
+    xQueuePeek(sw2Queue, &sw2State, portMAX_DELAY);
+
+    if (sw1State)
+    {
+        frequencyOutput = input;
+        iteration = 1.0f;
+
+    }
+    else
+    {
+        float output_down = -iteration * input / bufferIterations + input;
+        frequencyOutput = output_down;
+
+        if (iteration >= bufferIterations)
+        {
+            iteration = bufferIterations;
+        }
+        else
+        {
+            iteration++;
+        }
+    }
+
+    return frequencyOutput;
+}
+
 int8_t nextSample()
 {
-    // VCO
     int8_t vco = sawtooth_.next() + squarewv_.next();
 
-    // VCF (enabled)
-    int8_t vcf = vco;
+    int8_t vcf = processVCF(vco);
 
-    // VCA (disabled)
-    int8_t vca = vcf;
+    int8_t vca = processVca(vcf);
 
     int8_t output = vca;
 
@@ -112,8 +142,6 @@ void buffer(void *pvParameters __attribute__((unused)))
 {
     for (EVER)
     {
-        vTaskSuspend(NULL);
-
         if (!pcmBufferFull())
         {
             pcmAddSample(nextSample());
@@ -131,48 +159,13 @@ void buttonTask(void *pvParameters __attribute__((unused)))
 
     for (EVER)
     {
-        xTaskNotifyWait(0, 0xFFFFFFFF, &notificationValue, portMAX_DELAY);
+        xTaskNotifyWait(0, 0, &notificationValue, portMAX_DELAY);
 
-        if (notificationValue == PIN_SW1)
-        {
-            if (digitalRead(PIN_SW1) == HIGH)
-            {
-                // Serial.println("Button 1 pressed");
-                setNoteHz(440.0f);
-                pcmAddSample(nextSample());
-            }
-            else
-            {
-                // Serial.println("Button 1 unpressed");
-                setNoteHz(0.0f);
-                pcmAddSample(nextSample());
-            }
-        }
+        int sw1PinState = digitalRead(PIN_SW1);
+        int sw2PinState = digitalRead(PIN_SW2);
 
-        // if (notificationValue == PIN_SW2)
-        // {
-        //     if (digitalRead(PIN_SW2) == HIGH)
-        //     {
-        //         // Serial.println("Button pressed");
-
-        //         // if (!pcmBufferFull())
-        //         // {
-        //         //     pcmAddSample(nextSample());
-        //         // }
-        //         // else
-        //         // {
-        //         //     taskYIELD();
-        //         // }
-        //     }
-        //     else
-        //     {
-        //         // Serial.println("Button 2 not pressed");
-        //         // setNoteHz(0.0f);
-        //         // pcmAddSample(nextSample());
-        //     }
-        // }
-
-        taskYIELD();
+        xQueueOverwrite(sw1Queue, &sw1PinState);
+        xQueueOverwrite(sw2Queue, &sw2PinState);
     }
 }
 
@@ -182,7 +175,7 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
     {
         float tempo = (analogRead(PIN_RV1) / 1080.0f) * (240.0f - 60.0f) + 240.0f;
         xQueueOverwrite(tempoQueue, &tempo);
-        float vcaLength = (analogRead(PIN_RV2) * 3.0f) / 1023.0f;
+        float vcaLength = (analogRead(PIN_RV2) / 1023.0f) * 3.0f;
         xQueueOverwrite(vcaLengthQueue, &vcaLength);
         float coupure = (analogRead(PIN_RV3) * PI) / 1023.0f;
         xQueueOverwrite(coupureQueue, &coupure);
@@ -198,22 +191,30 @@ void sw1Isr()
     // In this case, eSetValueWithOverwrite means if multiple button presses occur before the task processes the first one, only the most recent notification will be kept.
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xTaskNotifyFromISR(
-        buttonTaskHandle_,
+        buttonTaskHandle,
         PIN_SW1,
         eSetValueWithOverwrite,
         &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR();
+
+    if (xHigherPriorityTaskWoken)
+    {
+        portYIELD_FROM_ISR();
+    }
 }
 
 void sw2Isr()
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xTaskNotifyFromISR(
-        buttonTaskHandle_,
+        buttonTaskHandle,
         PIN_SW2,
         eSetValueWithOverwrite,
         &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR();
+
+    if (xHigherPriorityTaskWoken)
+    {
+        portYIELD_FROM_ISR();
+    }
 }
 
 void setup()
@@ -240,22 +241,24 @@ void setup()
     coupureQueue = xQueueCreate(1, sizeof(float));
     vcaLengthQueue = xQueueCreate(1, sizeof(float));
 
-    eventGroup_ = xEventGroupCreate();
+    sw1Queue = xQueueCreate(1, sizeof(int));
+    sw2Queue = xQueueCreate(1, sizeof(int));
+
 
     xTaskCreate(
         buttonTask,
         "buttonTask",
         256,
         NULL,
-        3,
-        &buttonTaskHandle_);
+        2,
+        &buttonTaskHandle);
 
     xTaskCreate(
         buffer,
         "buttonTask",
         256,
         NULL,
-        0,
+        1,
         &bufferTaskHandle);
 
     xTaskCreate(
@@ -263,7 +266,7 @@ void setup()
         "readPotentiometer",
         256,
         NULL,
-        3,
+        2,
         NULL);
 }
 
