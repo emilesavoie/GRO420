@@ -3,6 +3,7 @@
 #include <Oscil.h>
 #include <tables/saw2048_int8.h>
 #include <tables/square_no_alias_2048_int8.h>
+#include <song.hpp>
 
 #include <event_groups.h>
 #include <queue.h>
@@ -37,6 +38,12 @@ using SquareWv = Oscil<SQUARE_NO_ALIAS_2048_NUM_CELLS, SAMPLE_RATE>;
 #define PIN_RV2 A1
 #define PIN_RV3 A2
 #define PIN_RV4 A3
+
+constexpr uint8_t MAX_VALUE = 0;
+constexpr uint8_t MIN_VALUE = 1;
+
+constexpr uint32_t scale = UINT32_MAX / (MAX_VALUE - MIN_VALUE);
+constexpr uint32_t offset = -MIN_VALUE * scale;
 
 SquareWv squarewv_;
 Sawtooth sawtooth_;
@@ -98,6 +105,10 @@ int8_t processVca(int8_t input)
     int sw1State;
     int sw2State;
 
+    float tempo;
+
+    xQueueOverwrite(tempoQueue, &tempo);
+
     xQueuePeek(sw1Queue, &sw1State, portMAX_DELAY);
     xQueuePeek(sw2Queue, &sw2State, portMAX_DELAY);
 
@@ -105,24 +116,55 @@ int8_t processVca(int8_t input)
     {
         frequencyOutput = input;
         iteration = 1.0f;
-
     }
-    else
+    else if (sw2State)
     {
-        float output_down = -iteration * input / bufferIterations + input;
-        frequencyOutput = output_down;
-
-        if (iteration >= bufferIterations)
+        if (!isPlayingMelody)
         {
-            iteration = bufferIterations;
+            songIndex = 0; // Restart the melody
+            isPlayingMelody = true;
+            noteTimer = song[songIndex].duration * (60 * 250 / tempo); // Calculate duration
+            setNoteHz(song[songIndex].freq);
+        }
+
+        // Update melody timing
+        if (noteTimer <= 0)
+        {
+            songIndex++;
+            if (songIndex < sizeof(song) / sizeof(song[0]))
+            {
+                setNoteHz(song[songIndex].freq);
+                noteTimer = song[songIndex].duration * (60 * 250 / tempo);
+            }
+            else
+            {
+                isPlayingMelody = false; // End of melody
+                frequencyOutput = 0;
+            }
         }
         else
         {
-            iteration++;
+            noteTimer--; // Countdown the note timer
         }
-    }
 
-    return frequencyOutput;
+        frequencyOutput = input; // Pass the VCO signal
+        else
+        {
+            float output_down = -iteration * input / bufferIterations + input;
+            frequencyOutput = output_down;
+
+            if (iteration >= bufferIterations)
+            {
+                iteration = bufferIterations;
+            }
+            else
+            {
+                iteration++;
+            }
+        }
+
+        return frequencyOutput;
+    }
 }
 
 int8_t nextSample()
@@ -161,8 +203,8 @@ void buttonTask(void *pvParameters __attribute__((unused)))
     {
         xTaskNotifyWait(0, 0, &notificationValue, portMAX_DELAY);
 
-        int sw1PinState = digitalRead(PIN_SW1);
-        int sw2PinState = digitalRead(PIN_SW2);
+        bool sw1PinState = digitalRead(PIN_SW1);
+        bool sw2PinState = digitalRead(PIN_SW2);
 
         xQueueOverwrite(sw1Queue, &sw1PinState);
         xQueueOverwrite(sw2Queue, &sw2PinState);
@@ -174,12 +216,19 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
     for (EVER)
     {
         float tempo = (analogRead(PIN_RV1) / 1080.0f) * (240.0f - 60.0f) + 240.0f;
+        uint32_t mappedTempo = (tempo * scale) + offset;
         xQueueOverwrite(tempoQueue, &tempo);
+
         float vcaLength = (analogRead(PIN_RV2) / 1023.0f) * 3.0f;
+        uint32_t mappedVcaLength = (vcaLength * scale) + offset;
         xQueueOverwrite(vcaLengthQueue, &vcaLength);
+
         float coupure = (analogRead(PIN_RV3) * PI) / 1023.0f;
+        uint32_t mappedCoupure = (coupure * scale) + offset;
         xQueueOverwrite(coupureQueue, &coupure);
+
         float frequence = analogRead(PIN_RV4) / 1023.0f;
+        uint32_t mappedFrequence = (frequence * scale) + offset;
         xQueueOverwrite(freqQueue, &frequence);
 
         vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -204,6 +253,7 @@ void sw1Isr()
 
 void sw2Isr()
 {
+
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xTaskNotifyFromISR(
         buttonTaskHandle,
@@ -236,14 +286,13 @@ void setup()
 
     pcmSetup();
 
-    freqQueue = xQueueCreate(1, sizeof(float));
-    tempoQueue = xQueueCreate(1, sizeof(float));
-    coupureQueue = xQueueCreate(1, sizeof(float));
-    vcaLengthQueue = xQueueCreate(1, sizeof(float));
+    freqQueue = xQueueCreate(1, sizeof(uint32_t));
+    tempoQueue = xQueueCreate(1, sizeof(uint32_t));
+    coupureQueue = xQueueCreate(1, sizeof(uint32_t));
+    vcaLengthQueue = xQueueCreate(1, sizeof(uint32_t));
 
-    sw1Queue = xQueueCreate(1, sizeof(int));
-    sw2Queue = xQueueCreate(1, sizeof(int));
-
+    sw1Queue = xQueueCreate(1, sizeof(bool));
+    sw2Queue = xQueueCreate(1, sizeof(bool));
 
     xTaskCreate(
         buttonTask,
