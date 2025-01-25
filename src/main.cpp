@@ -101,7 +101,7 @@ int8_t processVCA(int8_t input)
     if (xQueueReceive(potDataQueue, &sPotentiometerData, 0)) {}
     if (xQueueReceive(switchDataQueue, &sSwitchData, 0)) {}
 
-    float bufferIterations = 3 * 8000;  // 3 seconds * 8000 samples/second
+    float bufferIterations = sPotentiometerData.vcaLength * 8000;  // 3 seconds * 8000 samples/second
     static float iteration = bufferIterations;  // Start at end of decay
     int8_t frequencyOutput;
 
@@ -170,7 +170,7 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
     for (EVER)
     {
         sPotentiometerData.tempo = (analogRead(PIN_RV1) / 1080.0f) * (240.0f - 60.0f) + 240.0f;
-        sPotentiometerData.vcaLength = (analogRead(PIN_RV2) / 3.0f) * 1023.0f;
+        sPotentiometerData.vcaLength = (analogRead(PIN_RV2) / 1023.0f) * 3.0f;
         sPotentiometerData.coupure = (analogRead(PIN_RV3) * PI) / 1023.0f;
         sPotentiometerData.frequence = analogRead(PIN_RV4) / 1023.0f;
 
