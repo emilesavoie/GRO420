@@ -21,6 +21,10 @@ mais je suis nul avec FreeRTOS... Bonne chance!
 
 */
 
+/*
+Ce define a pour utilité unique de clarifier la lecture du code
+*/
+
 #define EVER \
     ;        \
     ;
@@ -37,6 +41,13 @@ using SquareWv = Oscil<SQUARE_NO_ALIAS_2048_NUM_CELLS, SAMPLE_RATE>;
 
 SquareWv squarewv_;
 Sawtooth sawtooth_;
+
+/*
+Les structs suivantes sont définies afin de limiter la création et la gestion de queues dans le programme.
+De cette manière, il est possible d'éviter le overhead non nécéssaire. Les structs sont séparés selon des
+groupes déterminés. Toutes les valeurs auraient pu être mises dans une seule queues, mais cela nuirait à
+la lisibilité ainsi qu'à la modularité. Des objets de queues sont ensuite créer pour chacune des structs
+*/
 
 struct SwitchData
 {
@@ -77,6 +88,14 @@ void setNoteHz(float note)
     sawtooth_.setFreq(note);
 }
 
+/*
+La fonction processVCF demeure presque identique à l'exeption qu'une partie des calculs se trouvent
+maintenant dans la tâche readPotentiometer(). Pour avoir accès au données en temps réel, la fonction
+utilise xQueueReceive() qui permet de réatitrer les valeurs les plus récents aux éléments de la structs,
+mais seulement si un changement a été perçu. Sinon, les anciennes valeurs sont utilisés. Cette utilisation
+permet de diminuer les calculs et facilement accéder aux valeurs nécéssaire pour une fonction qui est
+appelé à une haute fréquence tel que celle-ci
+*/
 int8_t processVCF(int8_t input)
 {
     static int8_t y1 = 0;
@@ -100,11 +119,21 @@ int8_t processVCF(int8_t input)
     return output;
 }
 
+/*
+La fonction processVCA permet de calculer la chute linéaire de la fréquence joué. Pour ce faire, la fonction
+accède premièrement aux valeurs les plus récentes des structs pertinentes. La fonction calcule premièrement
+le nombre d'itérations nécéssaire pour compléter la chute selon le temps déterminer par la valeur du
+potentiomètre. Si l'un des deux boutons est enclenché, le nombre d'itérations est contournés et la valeur
+de fréquence est déterminé par le paramètre d'entré de la fonction (le vcf). Si l'un des deux boutons n'est
+plus enclenché, la chute débute. Une fois le nombre d'itérations complété, la fréquence de sortie est posé
+à 0 afin de marquer la fin de la chute.
+*/
 int8_t processVCA(int8_t input)
 {
     if (xQueueReceive(potDataQueue, &sPotentiometerData, 0))
     {
     }
+
     if (xQueueReceive(switchDataQueue, &sSwitchData, 0))
     {
     }
@@ -113,7 +142,6 @@ int8_t processVCA(int8_t input)
     static float iteration = bufferIterations;
     int8_t frequencyOutput;
 
-    // Active when SW1 or SW2 is pressed
     if (sSwitchData.sw1 || sSwitchData.sw2)
     {
         iteration = 0;
@@ -121,7 +149,6 @@ int8_t processVCA(int8_t input)
     }
     else
     {
-        // Linear decay over configurable time
         if (iteration < bufferIterations)
         {
             float decay = 1.0f - (iteration / bufferIterations);
@@ -137,6 +164,16 @@ int8_t processVCA(int8_t input)
     return frequencyOutput;
 }
 
+/*
+L fonction nextSample() a grandement été modifié pour gérer le cas de la mélodie. Si le bouton sw1 est
+enclenché, le comportement reste le même et la même note est envoyé au vco. Par contre, si le bouton sw2 est
+enclenché, chacune des notes doivent maintenant etre joué correctement. Pour ce faire, la fonction détermine
+d'abord le temps depuis le début du programme. Un calcul permet ensuite de déterminer si la duration de la
+note est respecté. La fonction permet ensuite de gérer le cas où la chanson doit jouer en boucle et finalement
+donné la valeur de la fréquence de la note a la fonction setNoteHz() qui est ensuite utilisé dans le vco. Les
+queues sont encore utilisé dans cette fonction afin de faciliter l'accès à des variables dans plusieurs
+fonctions tout en les gardant "thread safe"
+*/
 int8_t nextSample()
 {
     int8_t vco;
@@ -147,27 +184,22 @@ int8_t nextSample()
 
     if (sSwitchData.sw1)
     {
-        // Constant note when SW1 is pressed
         vco = sawtooth_.next() + squarewv_.next();
     }
     else if (sSwitchData.sw2)
     {
-        // Play song when SW2 is pressed
         unsigned long currentTime = millis();
 
         // TODO Implement tempo division on calculation
         if (currentTime - sMelodyData.noteStartTime >= (song[sMelodyData.currentNoteIndex].duration * TEMPO_16T_MS))
         {
-            // Move to next note
             sMelodyData.currentNoteIndex++;
 
-            // Reset or loop song
             if (sMelodyData.currentNoteIndex >= sizeof(song) / sizeof(song[0]))
             {
                 sMelodyData.currentNoteIndex = 0;
             }
 
-            // Set frequency for new note
             setNoteHz(song[sMelodyData.currentNoteIndex].freq);
             sMelodyData.noteStartTime = currentTime;
         }
@@ -185,6 +217,14 @@ int8_t nextSample()
     return vca;
 }
 
+/*
+Les 2 fonctions de ISR des boutons poussoirs servent le meme but. Les 2 sont enclenché au moments de leurs
+interrupts respectifs. En premier lieu, les fonction déclare une variable de type BaseType_t. Cette variable
+permet de signaler au système si une tâche de plus haute priorité est réveillé lors de l'appel de la
+fonction xQueueOverwriteFromISR(). Cette fonction est faite pour etre executé dans un ISR et est dont tres
+rapide et efficace. Son utilité est de mettre a jour l'élément de la struct des boutons poussoirs et
+d'esnsuite mettre a joure la queue
+*/
 void sw1Isr()
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -211,6 +251,15 @@ void sw2Isr()
     }
 }
 
+/*
+La lecture des potentiomètres n'est effectués qu'au 10Hz. C'est donc un excellent moment pour effectuer
+des calculs qui sont souteux, car la fonction n'est pas effectué souvent. Ainsi, une partie des calculs
+original de la fonction nextSample() ont été migré ici. Chacune des valeurs de potentiomètre est
+correctement mapper sur les valeurs déterminés et sont ensuite attribuer à un des élément de la struct
+contenant les différents attributs des potentiomètres. De plus, une fois les calculs de b1, a1 et a2
+effectué leur résultat est également stocké dans leur struct respective. Une fois ceci fait, les queues
+sont ensuite mises à jour avec les résultats déterminés
+*/
 void readPotentiometer(void *pvParameters __attribute__((unused)))
 {
     for (EVER)
@@ -235,6 +284,10 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
     }
 }
 
+/*
+La fonction fillBuffer ne fait que remplir le buffer avec la fréquence pré déterminé. Si le buffer est
+plein, la tâche est relégué
+*/
 void fillBuffer(void *pvParameters __attribute__((unused)))
 {
     for (EVER)
@@ -257,15 +310,24 @@ void setup()
     pinMode(PIN_SW1, INPUT);
     pinMode(PIN_SW2, INPUT);
 
-
     Serial.begin(9600);
 
     squarewv_ = SquareWv(SQUARE_NO_ALIAS_2048_DATA);
     sawtooth_ = SquareWv(SAW2048_DATA);
 
+    /*
+    Pour l'implémentation des boutons, il a été déterminé que l'utilisation des interrupt de FreeRTOS
+    permettrais une implémentation plus dynamique. En effet, On ne vérifie pas en permannance si les
+    boutons sont enclenché, mais dès qu'un changement d'état est déclanché, celui-ci notifie le ISR
+    respectif
+    */
+
     attachInterrupt(digitalPinToInterrupt(PIN_SW1), sw1Isr, CHANGE);
     attachInterrupt(digitalPinToInterrupt(PIN_SW2), sw2Isr, CHANGE);
 
+    /*
+    Une Queue est créée pour chacune des struct définies plus haut
+    */
     switchDataQueue = xQueueCreate(1, sizeof(SwitchData));
     potDataQueue = xQueueCreate(1, sizeof(PotentiometerData));
     filterCoeffsQueue = xQueueCreate(1, sizeof(FilterCoeffs));
@@ -275,6 +337,11 @@ void setup()
 
     pcmSetup();
 
+    /*
+    Seulement 2 taches sont utilisés. La lecture des potentiomètres sont priorisé pour permettre un
+    changement plus dynamique. Le buffer quant à lui est une tâche secondaire qui est quand mème
+    exécuté la majorité du temps puisque les potentiomètres ne sont lue qu'à une fréquence de 10Hz
+    */
     xTaskCreate(
         fillBuffer,
         "buttonTask",
