@@ -98,17 +98,35 @@ int8_t processVCF(int8_t input)
 
 int8_t processVCA(int8_t input)
 {
-    // Read the VCA control value
-    float gain = sPotentiometerData.vcaLength / 1023.0f; // Normalize to [0, 1]
+    if (xQueueReceive(potDataQueue, &sPotentiometerData, 0)) {}
+    if (xQueueReceive(switchDataQueue, &sSwitchData, 0)) {}
 
-    // Scale the input by the gain value
-    int16_t scaledInput = input * gain;
+    float bufferIterations = 3 * 8000;  // 3 seconds * 8000 samples/second
+    static float iteration = bufferIterations;  // Start at end of decay
+    int8_t frequencyOutput;
 
-    // Ensure the result fits in int8_t
-    // Serial.println(static_cast<int8_t>(scaledInput));
-    return static_cast<int8_t>(scaledInput);
+    if (sSwitchData.sw1)
+    {
+        iteration = 0;  // Reset when button is pressed
+        frequencyOutput = input;
+    }
+    else
+    {
+        // Linear decay over 3 seconds
+        if (iteration < bufferIterations)
+        {
+            float decay = 1.0f - (iteration / bufferIterations);
+            frequencyOutput = input * decay;
+            iteration++;
+        }
+        else
+        {
+            frequencyOutput = 0;  // Complete silence after 3 seconds
+        }
+    }
+
+    return frequencyOutput;
 }
-
 int8_t nextSample()
 {
     int8_t vco = sawtooth_.next() + squarewv_.next();
@@ -156,11 +174,6 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
         sPotentiometerData.coupure = (analogRead(PIN_RV3) * PI) / 1023.0f;
         sPotentiometerData.frequence = analogRead(PIN_RV4) / 1023.0f;
 
-        Serial.println(sPotentiometerData.tempo);
-        Serial.println(sPotentiometerData.vcaLength);
-        Serial.println(sPotentiometerData.coupure);
-        Serial.println(sPotentiometerData.frequence);
-
         float f = sPotentiometerData.coupure;
         float q = sPotentiometerData.frequence;
 
@@ -180,29 +193,12 @@ void fillBuffer(void *pvParameters __attribute__((unused)))
 {
     for (EVER)
     {
-        // Check if the PCM buffer is not full
         if (!pcmBufferFull())
         {
-            // Try to receive the latest switch data from the queue (non-blocking)
-            if (xQueueReceive(switchDataQueue, &sSwitchData, 0) == pdTRUE)
-            {
-                // Check if sw1 is pressed
-                if (sSwitchData.sw1)
-                {
-                    // Generate the next audio sample
-                    int8_t sample = nextSample();
-                    pcmAddSample(sample);
-                }
-                else
-                {
-                    // Add silence if sw1 is not pressed
-                    pcmAddSample(0);
-                }
-            }
+            pcmAddSample(nextSample());
         }
         else
         {
-            // Yield the task if the buffer is full
             taskYIELD();
         }
     }
