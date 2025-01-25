@@ -59,9 +59,17 @@ struct FilterCoeffs
     float a2;
 } sFilterCoeffs;
 
+struct MelodyData
+{
+    int currentNoteIndex = 0;
+    unsigned long noteStartTime = 0;
+    bool playSong = false;
+} sMelodyData;
+
 QueueHandle_t switchDataQueue;
 QueueHandle_t potDataQueue;
 QueueHandle_t filterCoeffsQueue;
+QueueHandle_t melodyDataQueue;
 
 void setNoteHz(float note)
 {
@@ -74,17 +82,13 @@ int8_t processVCF(int8_t input)
     static int8_t y1 = 0;
     static int8_t y2 = 0;
 
-    if (xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0)) // Non-blocking check
+    if (xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0))
     {
     }
 
     float b1 = sFilterCoeffs.b1;
     float a1 = sFilterCoeffs.a1;
     float a2 = sFilterCoeffs.a2;
-
-    // Serial.println(b1);
-    // Serial.println(a1);
-    // Serial.println(a2);
 
     int16_t y0 = b1 * input + a1 * y1 + a2 * y2;
 
@@ -98,21 +102,26 @@ int8_t processVCF(int8_t input)
 
 int8_t processVCA(int8_t input)
 {
-    if (xQueueReceive(potDataQueue, &sPotentiometerData, 0)) {}
-    if (xQueueReceive(switchDataQueue, &sSwitchData, 0)) {}
+    if (xQueueReceive(potDataQueue, &sPotentiometerData, 0))
+    {
+    }
+    if (xQueueReceive(switchDataQueue, &sSwitchData, 0))
+    {
+    }
 
-    float bufferIterations = sPotentiometerData.vcaLength * 8000;  // 3 seconds * 8000 samples/second
-    static float iteration = bufferIterations;  // Start at end of decay
+    float bufferIterations = sPotentiometerData.vcaLength * 8000;
+    static float iteration = bufferIterations;
     int8_t frequencyOutput;
 
-    if (sSwitchData.sw1)
+    // Active when SW1 or SW2 is pressed
+    if (sSwitchData.sw1 || sSwitchData.sw2)
     {
-        iteration = 0;  // Reset when button is pressed
+        iteration = 0;
         frequencyOutput = input;
     }
     else
     {
-        // Linear decay over 3 seconds
+        // Linear decay over configurable time
         if (iteration < bufferIterations)
         {
             float decay = 1.0f - (iteration / bufferIterations);
@@ -121,24 +130,61 @@ int8_t processVCA(int8_t input)
         }
         else
         {
-            frequencyOutput = 0;  // Complete silence after 3 seconds
+            frequencyOutput = 0;
         }
     }
 
     return frequencyOutput;
 }
+
 int8_t nextSample()
 {
-    int8_t vco = sawtooth_.next() + squarewv_.next();
+    int8_t vco;
+
+    if (xQueueReceive(potDataQueue, &sPotentiometerData, 0))
+    {
+    }
+
+    if (sSwitchData.sw1)
+    {
+        // Constant note when SW1 is pressed
+        vco = sawtooth_.next() + squarewv_.next();
+    }
+    else if (sSwitchData.sw2)
+    {
+        // Play song when SW2 is pressed
+        unsigned long currentTime = millis();
+
+        // TODO Implement tempo division on calculation
+        if (currentTime - sMelodyData.noteStartTime >= (song[sMelodyData.currentNoteIndex].duration * TEMPO_16T_MS))
+        {
+            // Move to next note
+            sMelodyData.currentNoteIndex++;
+
+            // Reset or loop song
+            if (sMelodyData.currentNoteIndex >= sizeof(song) / sizeof(song[0]))
+            {
+                sMelodyData.currentNoteIndex = 0;
+            }
+
+            // Set frequency for new note
+            setNoteHz(song[sMelodyData.currentNoteIndex].freq);
+            sMelodyData.noteStartTime = currentTime;
+        }
+
+        vco = sawtooth_.next() + squarewv_.next();
+    }
+    else
+    {
+        vco = sawtooth_.next() + squarewv_.next();
+    }
+
     int8_t vcf = processVCF(vco);
     int8_t vca = processVCA(vcf);
 
-    int8_t output = vca;
-
-    return output;
+    return vca;
 }
 
-// Fonctions ISR
 void sw1Isr()
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -169,7 +215,7 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
 {
     for (EVER)
     {
-        sPotentiometerData.tempo = (analogRead(PIN_RV1) / 1080.0f) * (240.0f - 60.0f) + 240.0f;
+        sPotentiometerData.tempo = analogRead(PIN_RV1) * 180.0f / 1023.0f + 60.0f;
         sPotentiometerData.vcaLength = (analogRead(PIN_RV2) / 1023.0f) * 3.0f;
         sPotentiometerData.coupure = (analogRead(PIN_RV3) * PI) / 1023.0f;
         sPotentiometerData.frequence = analogRead(PIN_RV4) / 1023.0f;
@@ -211,18 +257,19 @@ void setup()
     pinMode(PIN_SW1, INPUT);
     pinMode(PIN_SW2, INPUT);
 
-    attachInterrupt(digitalPinToInterrupt(PIN_SW1), sw1Isr, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(PIN_SW2), sw2Isr, CHANGE);
 
     Serial.begin(9600);
 
-    // Oscillator.
     squarewv_ = SquareWv(SQUARE_NO_ALIAS_2048_DATA);
     sawtooth_ = SquareWv(SAW2048_DATA);
+
+    attachInterrupt(digitalPinToInterrupt(PIN_SW1), sw1Isr, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_SW2), sw2Isr, CHANGE);
 
     switchDataQueue = xQueueCreate(1, sizeof(SwitchData));
     potDataQueue = xQueueCreate(1, sizeof(PotentiometerData));
     filterCoeffsQueue = xQueueCreate(1, sizeof(FilterCoeffs));
+    melodyDataQueue = xQueueCreate(1, sizeof(MelodyData));
 
     setNoteHz(440.0);
 
