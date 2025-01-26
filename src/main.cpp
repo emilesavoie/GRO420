@@ -73,8 +73,7 @@ struct FilterCoeffs
 struct MelodyData
 {
     int currentNoteIndex = 0;
-    unsigned long noteStartTime = 0;
-    bool playSong = false;
+    int currentNoteDuration = 0;
 } sMelodyData;
 
 QueueHandle_t switchDataQueue;
@@ -165,7 +164,7 @@ int8_t processVCA(int8_t input)
 }
 
 /*
-L fonction nextSample() a grandement été modifié pour gérer le cas de la mélodie. Si le bouton sw1 est
+La fonction nextSample() a grandement été modifié pour gérer le cas de la mélodie. Si le bouton sw1 est
 enclenché, le comportement reste le même et la même note est envoyé au vco. Par contre, si le bouton sw2 est
 enclenché, chacune des notes doivent maintenant etre joué correctement. Pour ce faire, la fonction détermine
 d'abord le temps depuis le début du programme. Un calcul permet ensuite de déterminer si la duration de la
@@ -177,8 +176,17 @@ fonctions tout en les gardant "thread safe"
 int8_t nextSample()
 {
     int8_t vco;
+    static int song_lenght = sizeof(song) / sizeof(song[0]);
 
     if (xQueueReceive(potDataQueue, &sPotentiometerData, 0))
+    {
+    }
+
+    if (xQueueReceive(switchDataQueue, &sSwitchData, 0))
+    {
+    }
+
+    if (xQueueReceive(melodyDataQueue, &sMelodyData, 0))
     {
     }
 
@@ -188,22 +196,25 @@ int8_t nextSample()
     }
     else if (sSwitchData.sw2)
     {
-        unsigned long currentTime = millis();
-
-        // TODO Implement tempo division on calculation
-        if (currentTime - sMelodyData.noteStartTime >= (song[sMelodyData.currentNoteIndex].duration * TEMPO_16T_MS))
+        if (sMelodyData.currentNoteIndex < song_lenght)
         {
-            sMelodyData.currentNoteIndex++;
-
-            if (sMelodyData.currentNoteIndex >= sizeof(song) / sizeof(song[0]))
+            if (sMelodyData.currentNoteDuration < song[sMelodyData.currentNoteIndex].duration * 60.0f * 250.0f / sPotentiometerData.tempo)
             {
-                sMelodyData.currentNoteIndex = 0;
+                setNoteHz(song[sMelodyData.currentNoteIndex].freq);
+                sMelodyData.currentNoteDuration++;
             }
-
-            setNoteHz(song[sMelodyData.currentNoteIndex].freq);
-            sMelodyData.noteStartTime = currentTime;
+            else
+            {
+                sMelodyData.currentNoteIndex++;
+                sMelodyData.currentNoteDuration = 0;
+            }
         }
-
+        else
+        {
+            sMelodyData.currentNoteIndex = 0;
+            sMelodyData.currentNoteDuration = 1;
+            setNoteHz(song[sMelodyData.currentNoteIndex].freq);
+        }
         vco = sawtooth_.next() + squarewv_.next();
     }
     else
@@ -264,6 +275,15 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
 {
     for (EVER)
     {
+
+        if (xQueueReceive(potDataQueue, &sPotentiometerData, 0))
+        {
+        }
+
+        if (xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0))
+        {
+        }
+
         sPotentiometerData.tempo = analogRead(PIN_RV1) * 180.0f / 1023.0f + 60.0f;
         sPotentiometerData.vcaLength = (analogRead(PIN_RV2) / 1023.0f) * 3.0f;
         sPotentiometerData.coupure = (analogRead(PIN_RV3) * PI) / 1023.0f;
@@ -313,7 +333,7 @@ void setup()
     Serial.begin(9600);
 
     squarewv_ = SquareWv(SQUARE_NO_ALIAS_2048_DATA);
-    sawtooth_ = SquareWv(SAW2048_DATA);
+    sawtooth_ = Sawtooth(SAW2048_DATA);
 
     /*
     Pour l'implémentation des boutons, il a été déterminé que l'utilisation des interrupt de FreeRTOS
