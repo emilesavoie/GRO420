@@ -265,6 +265,11 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
     PotentiometerData sPotentiometerDataLocal;
     FilterCoeffs sFilterCoeffsLocal;
 
+    TickType_t taskWakeTime;
+    const TickType_t taskFrequency= 100;
+
+    taskWakeTime = xTaskGetTickCount();
+
     for (EVER)
     {
         sPotentiometerDataLocal.tempo = analogRead(PIN_RV1) * 180.0f / 1023.0f + 60.0f;
@@ -283,7 +288,7 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
         xQueueOverwrite(potDataQueue, &sPotentiometerDataLocal);
         xQueueOverwrite(filterCoeffsQueue, &sFilterCoeffsLocal);
 
-        vTaskDelayUntil(100 / portTICK_PERIOD_MS);
+        vTaskDelayUntil(&taskWakeTime, taskFrequency);
     }
 }
 
