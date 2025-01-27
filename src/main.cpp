@@ -43,18 +43,23 @@ SquareWv squarewv_;
 Sawtooth sawtooth_;
 
 static constexpr float baseTime = 60.0f * 250.0f;
+int song_lenght = sizeof(song) / sizeof(song[0]);
 
 /*
 Les structs suivantes sont définies afin de limiter la création et la gestion de queues dans le programme.
 De cette manière, il est possible d'éviter le overhead non nécéssaire. Les structs sont séparés selon des
 groupes déterminés. Toutes les valeurs auraient pu être mises dans une seule queues, mais cela nuirait à
-la lisibilité ainsi qu'à la modularité. Des objets de queues sont ensuite créer pour chacune des structs
+la lisibilité ainsi qu'à la modularité. Des objets de queues sont ensuite créer pour chacune des structs.
+Les queues ont été utilisés pour permettre l'accès aux valeurs de ces structs dans plusieurs fonctions de façon "thread safe".
+Un event group aurait pu être utilisé pour les boutons, mais comme nous utilisions des queues pour les autres valeurs, 
+nous avons décidé de rester cohérent. Les queues de lectures sont globales, de cette façon il y a moins d'overhead. De plus, elles
+ne peuvent pas se nuire entre elles, car elles sont utilisées dans la même tâche.
 */
 
 struct SwitchData
 {
-    bool sw1;
-    bool sw2;
+    bool sw1 = false;
+    bool sw2 = false;
 } sSwitchData;
 
 struct PotentiometerData
@@ -81,7 +86,6 @@ struct MelodyData
 QueueHandle_t switchDataQueue;
 QueueHandle_t potDataQueue;
 QueueHandle_t filterCoeffsQueue;
-QueueHandle_t melodyDataQueue;
 
 void setNoteHz(float note)
 {
@@ -92,8 +96,8 @@ void setNoteHz(float note)
 /*
 La fonction processVCF demeure presque identique à l'exeption qu'une partie des calculs se trouvent
 maintenant dans la tâche readPotentiometer(). Pour avoir accès au données en temps réel, la fonction
-utilise xQueueReceive() qui permet de réatitrer les valeurs les plus récents aux éléments de la structs,
-mais seulement si un changement a été perçu. Sinon, les anciennes valeurs sont utilisés. Cette utilisation
+utilise xQueuePeeke() qui permet de réatitrer les valeurs les plus récents aux éléments de la structs.
+ Sinon, les anciennes valeurs sont utilisés. Cette utilisation
 permet de diminuer les calculs et facilement accéder aux valeurs nécéssaire pour une fonction qui est
 appelé à une haute fréquence tel que celle-ci
 */
@@ -102,9 +106,7 @@ int8_t processVCF(int8_t input)
     static int8_t y1 = 0;
     static int8_t y2 = 0;
 
-    if (xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0))
-    {
-    }
+    xQueuePeek(filterCoeffsQueue, &sFilterCoeffs, 0);
 
     float b1 = sFilterCoeffs.b1;
     float a1 = sFilterCoeffs.a1;
@@ -131,13 +133,9 @@ plus enclenché, la chute débute. Une fois le nombre d'itérations complété, 
 */
 int8_t processVCA(int8_t input)
 {
-    if (xQueueReceive(potDataQueue, &sPotentiometerData, 0))
-    {
-    }
+    xQueuePeek(potDataQueue, &sPotentiometerData, 0);
 
-    if (xQueueReceive(switchDataQueue, &sSwitchData, 0))
-    {
-    }
+    xQueuePeek(switchDataQueue, &sSwitchData, 0);
 
     float bufferIterations = sPotentiometerData.vcaLength * 8000;
     static float iteration = bufferIterations;
@@ -166,10 +164,11 @@ int8_t processVCA(int8_t input)
 }
 
 /*
-L fonction nextSample() a grandement été modifié pour gérer le cas de la mélodie. Si le bouton sw1 est
+La fonction nextSample() a grandement été modifié pour gérer le cas de la mélodie. Si le bouton sw1 est
 enclenché, le comportement reste le même et la même note est envoyé au vco. Par contre, si le bouton sw2 est
 enclenché, chacune des notes doivent maintenant etre joué correctement. Pour ce faire, la fonction détermine
-le nombre de case de buffer à remplir selon le potentiomètre du tempo. La fonction permet ensuite de gérer le cas où la chanson doit jouer en boucle et finalement
+le nombre de case de buffer à remplir selon le potentiomètre du tempo. La fonction permet ensuite de gérer le 
+cas où la chanson doit jouer en boucle et finalement
 donné la valeur de la fréquence de la note a la fonction setNoteHz() qui est ensuite utilisé dans le vco. Les
 queues sont encore utilisé dans cette fonction afin de faciliter l'accès à des variables dans plusieurs
 fonctions tout en les gardant "thread safe"
@@ -177,19 +176,10 @@ fonctions tout en les gardant "thread safe"
 int8_t nextSample()
 {
     int8_t vco;
-    static int song_lenght = sizeof(song) / sizeof(song[0]);
 
-    if (xQueueReceive(potDataQueue, &sPotentiometerData, 0))
-    {
-    }
+    xQueuePeek(potDataQueue, &sPotentiometerData, 0);
 
-    if (xQueueReceive(switchDataQueue, &sSwitchData, 0))
-    {
-    }
-
-    if (xQueueReceive(melodyDataQueue, &sMelodyData, 0))
-    {
-    }
+    xQueuePeek(switchDataQueue, &sSwitchData, 0);
 
     if (sSwitchData.sw1)
     {
@@ -198,7 +188,7 @@ int8_t nextSample()
     else if (sSwitchData.sw2)
     {
         if (sMelodyData.currentNoteIndex < song_lenght)
-        {
+        {   
             if (sMelodyData.currentNoteDuration < song[sMelodyData.currentNoteIndex].duration * baseTime / sPotentiometerData.tempo)
             
             {
@@ -221,6 +211,8 @@ int8_t nextSample()
     }
     else
     {
+        sMelodyData.currentNoteIndex = 0;
+        sMelodyData.currentNoteDuration = 0;
         vco = sawtooth_.next() + squarewv_.next();
     }
 
@@ -236,14 +228,15 @@ interrupts respectifs. En premier lieu, les fonction déclare une variable de ty
 permet de signaler au système si une tâche de plus haute priorité est réveillé lors de l'appel de la
 fonction xQueueOverwriteFromISR(). Cette fonction est faite pour etre executé dans un ISR et est dont tres
 rapide et efficace. Son utilité est de mettre a jour l'élément de la struct des boutons poussoirs et
-d'esnsuite mettre a joure la queue
+d'esnsuite mettre a joure la queue. Les isr ont été utilisé, car les boutons ont un comportement apériodique.
 */
 void sw1Isr()
 {
+    SwitchData sSwitchDataLocal;
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    sSwitchData.sw1 = digitalRead(PIN_SW1);
+    sSwitchDataLocal.sw1 = digitalRead(PIN_SW1);
 
-    xQueueOverwriteFromISR(switchDataQueue, &sSwitchData, &xHigherPriorityTaskWoken);
+    xQueueOverwriteFromISR(switchDataQueue, &sSwitchDataLocal, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
     {
@@ -253,10 +246,11 @@ void sw1Isr()
 
 void sw2Isr()
 {
+    SwitchData sSwitchDataLocal;
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    sSwitchData.sw2 = digitalRead(PIN_SW2);
+    sSwitchDataLocal.sw2 = digitalRead(PIN_SW2);
 
-    xQueueOverwriteFromISR(switchDataQueue, &sSwitchData, &xHigherPriorityTaskWoken);
+    xQueueOverwriteFromISR(switchDataQueue, &sSwitchDataLocal, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
     {
@@ -266,41 +260,35 @@ void sw2Isr()
 
 /*
 La lecture des potentiomètres n'est effectués qu'au 10Hz. C'est donc un excellent moment pour effectuer
-des calculs qui sont souteux, car la fonction n'est pas effectué souvent. Ainsi, une partie des calculs
+des calculs qui sont couteux, car la fonction n'est pas effectué souvent. Ainsi, une partie des calculs
 original de la fonction nextSample() ont été migré ici. Chacune des valeurs de potentiomètre est
 correctement mapper sur les valeurs déterminés et sont ensuite attribuer à un des élément de la struct
 contenant les différents attributs des potentiomètres. De plus, une fois les calculs de b1, a1 et a2
 effectué leur résultat est également stocké dans leur struct respective. Une fois ceci fait, les queues
-sont ensuite mises à jour avec les résultats déterminés
+sont ensuite mises à jour avec les résultats déterminés.
 */
 void readPotentiometer(void *pvParameters __attribute__((unused)))
 {
+    PotentiometerData sPotentiometerDataLocal;
+    FilterCoeffs sFilterCoeffsLocal;
+
     for (EVER)
     {
+        sPotentiometerDataLocal.tempo = analogRead(PIN_RV1) * 180.0f / 1023.0f + 60.0f;
+        sPotentiometerDataLocal.vcaLength = (analogRead(PIN_RV2) / 1023.0f) * 3.0f;
+        sPotentiometerDataLocal.coupure = (analogRead(PIN_RV3) * PI) / 1023.0f;
+        sPotentiometerDataLocal.frequence = analogRead(PIN_RV4) / 1023.0f;
 
-        if (xQueueReceive(potDataQueue, &sPotentiometerData, 0))
-        {
-        }
-
-        if (xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0))
-        {
-        }
-
-        sPotentiometerData.tempo = analogRead(PIN_RV1) * 180.0f / 1023.0f + 60.0f;
-        sPotentiometerData.vcaLength = (analogRead(PIN_RV2) / 1023.0f) * 3.0f;
-        sPotentiometerData.coupure = (analogRead(PIN_RV3) * PI) / 1023.0f;
-        sPotentiometerData.frequence = analogRead(PIN_RV4) / 1023.0f;
-
-        float f = sPotentiometerData.coupure;
-        float q = sPotentiometerData.frequence;
+        float f = sPotentiometerDataLocal.coupure;
+        float q = sPotentiometerDataLocal.frequence;
 
         float fb = (q + (q / (1.0f - f)));
-        sFilterCoeffs.b1 = f * f * 256.0f;
-        sFilterCoeffs.a1 = (2 - 2 * f + f * fb - f * f * fb) * 256.0f;
-        sFilterCoeffs.a2 = -(1 - 2 * f + f * fb + f * f - f * f * fb) * 256.0f;
+        sFilterCoeffsLocal.b1 = f * f * 256.0f;
+        sFilterCoeffsLocal.a1 = (2 - 2 * f + f * fb - f * f * fb) * 256.0f;
+        sFilterCoeffsLocal.a2 = -(1 - 2 * f + f * fb + f * f - f * f * fb) * 256.0f;
 
-        xQueueOverwrite(potDataQueue, &sPotentiometerData);
-        xQueueOverwrite(filterCoeffsQueue, &sFilterCoeffs);
+        xQueueOverwrite(potDataQueue, &sPotentiometerDataLocal);
+        xQueueOverwrite(filterCoeffsQueue, &sFilterCoeffsLocal);
 
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
@@ -308,7 +296,8 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
 
 /*
 La fonction fillBuffer ne fait que remplir le buffer avec la fréquence pré déterminé. Si le buffer est
-plein, la tâche est relégué
+plein, la tâche est relégué. Dans notre cas, il n'y a pas d'autres tâches inférieur. Cependant, d'un point de vue d'implémentation future 
+et de modularité. Le taskYIELD() est quand même présent.
 */
 void fillBuffer(void *pvParameters __attribute__((unused)))
 {
@@ -353,7 +342,6 @@ void setup()
     switchDataQueue = xQueueCreate(1, sizeof(SwitchData));
     potDataQueue = xQueueCreate(1, sizeof(PotentiometerData));
     filterCoeffsQueue = xQueueCreate(1, sizeof(FilterCoeffs));
-    melodyDataQueue = xQueueCreate(1, sizeof(MelodyData));
 
     setNoteHz(440.0);
 
