@@ -106,7 +106,8 @@ int8_t processVCF(int8_t input)
     static int8_t y1 = 0;
     static int8_t y2 = 0;
 
-    xQueuePeek(filterCoeffsQueue, &sFilterCoeffs, 0);
+    if(xQueuePeek(filterCoeffsQueue, &sFilterCoeffs, 0))
+    {}
 
     float b1 = sFilterCoeffs.b1;
     float a1 = sFilterCoeffs.a1;
@@ -133,9 +134,11 @@ plus enclenché, la chute débute. Une fois le nombre d'itérations complété, 
 */
 int8_t processVCA(int8_t input)
 {
-    xQueuePeek(potDataQueue, &sPotentiometerData, 0);
+    if(xQueuePeek(potDataQueue, &sPotentiometerData, 0))
+    {}
 
-    xQueuePeek(switchDataQueue, &sSwitchData, 0);
+    if(xQueuePeek(switchDataQueue, &sSwitchData, 0))
+    {}
 
     float bufferIterations = sPotentiometerData.vcaLength * 8000;
     static float iteration = bufferIterations;
@@ -177,9 +180,11 @@ int8_t nextSample()
 {
     int8_t vco;
 
-    xQueuePeek(potDataQueue, &sPotentiometerData, 0);
+    if(xQueuePeek(potDataQueue, &sPotentiometerData, 0))
+    {}
 
-    xQueuePeek(switchDataQueue, &sSwitchData, 0);
+    if(xQueuePeek(switchDataQueue, &sSwitchData, 0))
+    {}
 
     if (sSwitchData.sw1)
     {
