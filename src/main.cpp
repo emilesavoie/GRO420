@@ -42,6 +42,8 @@ using SquareWv = Oscil<SQUARE_NO_ALIAS_2048_NUM_CELLS, SAMPLE_RATE>;
 SquareWv squarewv_;
 Sawtooth sawtooth_;
 
+static constexpr float baseTime = 60.0f * 250.0f;
+
 /*
 Les structs suivantes sont définies afin de limiter la création et la gestion de queues dans le programme.
 De cette manière, il est possible d'éviter le overhead non nécéssaire. Les structs sont séparés selon des
@@ -164,11 +166,10 @@ int8_t processVCA(int8_t input)
 }
 
 /*
-La fonction nextSample() a grandement été modifié pour gérer le cas de la mélodie. Si le bouton sw1 est
+L fonction nextSample() a grandement été modifié pour gérer le cas de la mélodie. Si le bouton sw1 est
 enclenché, le comportement reste le même et la même note est envoyé au vco. Par contre, si le bouton sw2 est
 enclenché, chacune des notes doivent maintenant etre joué correctement. Pour ce faire, la fonction détermine
-d'abord le temps depuis le début du programme. Un calcul permet ensuite de déterminer si la duration de la
-note est respecté. La fonction permet ensuite de gérer le cas où la chanson doit jouer en boucle et finalement
+le nombre de case de buffer à remplir selon le potentiomètre du tempo. La fonction permet ensuite de gérer le cas où la chanson doit jouer en boucle et finalement
 donné la valeur de la fréquence de la note a la fonction setNoteHz() qui est ensuite utilisé dans le vco. Les
 queues sont encore utilisé dans cette fonction afin de faciliter l'accès à des variables dans plusieurs
 fonctions tout en les gardant "thread safe"
@@ -198,7 +199,8 @@ int8_t nextSample()
     {
         if (sMelodyData.currentNoteIndex < song_lenght)
         {
-            if (sMelodyData.currentNoteDuration < song[sMelodyData.currentNoteIndex].duration * 60.0f * 250.0f / sPotentiometerData.tempo)
+            if (sMelodyData.currentNoteDuration < song[sMelodyData.currentNoteIndex].duration * baseTime / sPotentiometerData.tempo)
+            
             {
                 setNoteHz(song[sMelodyData.currentNoteIndex].freq);
                 sMelodyData.currentNoteDuration++;
