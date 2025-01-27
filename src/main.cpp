@@ -106,8 +106,8 @@ int8_t processVCF(int8_t input)
     static int8_t y1 = 0;
     static int8_t y2 = 0;
 
-    if(xQueuePeek(filterCoeffsQueue, &sFilterCoeffs, 0))
-    {}
+    // if(xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0))
+    // {}
 
     float b1 = sFilterCoeffs.b1;
     float a1 = sFilterCoeffs.a1;
@@ -134,11 +134,11 @@ plus enclenché, la chute débute. Une fois le nombre d'itérations complété, 
 */
 int8_t processVCA(int8_t input)
 {
-    if(xQueuePeek(potDataQueue, &sPotentiometerData, 0))
-    {}
+    // if(xQueueReceive(potDataQueue, &sPotentiometerData, 0))
+    // {}
 
-    if(xQueuePeek(switchDataQueue, &sSwitchData, 0))
-    {}
+    // if(xQueueReceive(switchDataQueue, &sSwitchData, 0))
+    // {}
 
     float bufferIterations = sPotentiometerData.vcaLength * 8000;
     static float iteration = bufferIterations;
@@ -179,12 +179,10 @@ fonctions tout en les gardant "thread safe"
 int8_t nextSample()
 {
     int8_t vco;
+    xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0);
+    xQueueReceive(potDataQueue, &sPotentiometerData, 0);
 
-    if(xQueuePeek(potDataQueue, &sPotentiometerData, 0))
-    {}
-
-    if(xQueuePeek(switchDataQueue, &sSwitchData, 0))
-    {}
+    xQueueReceive(switchDataQueue, &sSwitchData, 0);
 
     if (sSwitchData.sw1)
     {
@@ -368,7 +366,7 @@ void setup()
     xTaskCreate(
         readPotentiometer,
         "readPotentiometer",
-        256,
+        512,
         NULL,
         3,
         NULL);
