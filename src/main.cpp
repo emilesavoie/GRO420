@@ -295,8 +295,8 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
 
 /*
 La fonction fillBuffer ne fait que remplir le buffer avec la fréquence pré déterminé. Si le buffer est
-plein, la tâche est relégué. Dans notre cas, il n'y a pas d'autres tâches inférieur. Cependant, d'un point de vue d'implémentation future 
-et de modularité. Le taskYIELD() est quand même présent.
+plein, la tâche est relégué. Dans notre cas, il n'y a pas d'autres tâches inférieur. Cependant, d'un 
+point de vue d'implémentation future et de modularité. Le taskYIELD() est quand même présent.
 */
 void fillBuffer(void *pvParameters __attribute__((unused)))
 {
@@ -350,6 +350,7 @@ void setup()
     Seulement 2 taches sont utilisés. La lecture des potentiomètres sont priorisé pour permettre un
     changement plus dynamique. Le buffer quant à lui est une tâche secondaire qui est quand mème
     exécuté la majorité du temps puisque les potentiomètres ne sont lue qu'à une fréquence de 10Hz
+    en comparaison avec le 8kHz du buffer. C'est donc la deadline qui est plus crituque.
     */
     xTaskCreate(
         fillBuffer,
@@ -374,10 +375,11 @@ void loop()
 
 /*
 Notre code possède certaines limites. En effet,  
-nous avons une très grand précision sur la mélodie et le nombre de cycle à jouer pour l'atténuation du VCA.
-Cependant, il aurait été possible de faire tout avec des vTaskDelay. La programmation aurait été plus simple, mais 
-nous aurions eu moins de contrôle sur les notes jouées. En effet, nous avons dû faire beaucoup d'optimisation afin de réduire
-le jeeter au minimum. Effectivement, beaucoup de calcul sont introduits dans chaque ajout d'une note au buffer ce qui crée du délais 
-dans l'ajout des notes
-Bref, nous avons choisis la précision et le contrôle sur la mélodie, mais celle-ci viens avec un coup de cpu plus élevé. 
+nous avons une très grand précision sur la mélodie et le nombre de cycle à jouer pour l'atténuation 
+du VCA. Cependant, il aurait été possible de faire tout avec des vTaskDelay. La programmation aurait 
+été plus simple, mais nous aurions eu moins de contrôle sur les notes jouées. En effet, nous avons 
+dû faire beaucoup d'optimisation afin de réduir le jeeter au minimum. Effectivement, beaucoup de 
+calcul sont introduits dans chaque ajout d'une note au buffer ce qui crée du délais dans l'ajout des 
+notes. Bref, nous avons choisis la précision et le contrôle sur la mélodie, mais celle-ci viens avec 
+un coup de cpu plus élevé. 
 */
