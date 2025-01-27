@@ -19,8 +19,6 @@ mais je suis nul avec FreeRTOS... Bonne chance!
 
 - Stagiaire de A23
 
-*/
-
 /*
 Ce define a pour utilité unique de clarifier la lecture du code
 */
@@ -373,3 +371,13 @@ void setup()
 void loop()
 {
 }
+
+/*
+Notre code possède certaines limites. En effet,  
+nous avons une très grand précision sur la mélodie et le nombre de cycle à jouer pour l'atténuation du VCA.
+Cependant, il aurait été possible de faire tout avec des vTaskDelay. La programmation aurait été plus simple, mais 
+nous aurions eu moins de contrôle sur les notes jouées. En effet, nous avons dû faire beaucoup d'optimisation afin de réduire
+le jeeter au minimum. Effectivement, beaucoup de calcul sont introduits dans chaque ajout d'une note au buffer ce qui crée du délais 
+dans l'ajout des notes
+Bref, nous avons choisis la précision et le contrôle sur la mélodie, mais celle-ci viens avec un coup de cpu plus élevé. 
+*/
