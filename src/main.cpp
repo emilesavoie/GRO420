@@ -49,11 +49,14 @@ int song_lenght = sizeof(song) / sizeof(song[0]);
 Les structs suivantes sont définies afin de limiter la création et la gestion de queues dans le programme.
 De cette manière, il est possible d'éviter le overhead non nécéssaire. Les structs sont séparés selon des
 groupes déterminés. Toutes les valeurs auraient pu être mises dans une seule queues, mais cela nuirait à
-la lisibilité ainsi qu'à la modularité. Des objets de queues sont ensuite créer pour chacune des structs.
-Les queues ont été utilisés pour permettre l'accès aux valeurs de ces structs dans plusieurs fonctions de façon "thread safe".
-Un event group aurait pu être utilisé pour les boutons, mais comme nous utilisions des queues pour les autres valeurs, 
-nous avons décidé de rester cohérent. Les queues de lectures sont globales, de cette façon il y a moins d'overhead. De plus, elles
-ne peuvent pas se nuire entre elles, car elles sont utilisées dans la même tâche.
+la lisibilité ainsi qu'à la modularité. Une seule des tâches (readPotentiometer()) crée des objets locales.
+De cette manière les objets ne sont créer que lors de la lecture et la modification des valeurs. Cette 
+manière de faire permet également de diminuer la gestions des queues et la création des structs. 
+Les queues ont été utilisés pour permettre l'accès aux valeurs de ces structs dans plusieurs fonctions de 
+façon "thread safe".Un event group aurait pu être utilisé pour les boutons, mais comme nous utilisions des 
+queues pour les autres valeurs, nous avons décidé de rester cohérent. Les queues de lectures sont globales, 
+de cette façon il y a moins d'overhead. De plus, elles ne peuvent pas se nuire entre elles, car elles sont 
+utilisées dans la même tâche.
 */
 
 struct SwitchData
@@ -95,11 +98,10 @@ void setNoteHz(float note)
 
 /*
 La fonction processVCF demeure presque identique à l'exeption qu'une partie des calculs se trouvent
-maintenant dans la tâche readPotentiometer(). Pour avoir accès au données en temps réel, la fonction
-utilise xQueueReceive() qui permet de réatitrer les valeurs les plus récents aux éléments de la structs.
-Si les valeurs restent inchangés, les anciennes valeurs sont utilisés. Cette utilisationpermet de 
-diminuer les calculs et facilement accéder aux valeurs nécéssaire pour une fonction qui estappelé à une 
-haute fréquence tel que celle-ci
+maintenant dans la tâche readPotentiometer(). Les valeurs accéder dans cette fonctions sont 
+considérés comme globales. Ce choix peut être fait de par l'utilisation de ces variables dans une 
+seule tâche. Étant donné que processVCF est une fonction utilisé dans cette tâche, ceci ne pose pas
+problème.
 */
 int8_t processVCF(int8_t input)
 {
@@ -122,7 +124,7 @@ int8_t processVCF(int8_t input)
 
 /*
 La fonction processVCA permet de calculer la chute linéaire de la fréquence joué. Pour ce faire, la fonction
-accède premièrement aux valeurs les plus récentes des structs pertinentes. La fonction calcule premièrement
+accède aux données de la même manière que la fonction processVCF. La fonction calcule premièrement
 le nombre d'itérations nécéssaire pour compléter la chute selon le temps déterminer par la valeur du
 potentiomètre. Si l'un des deux boutons est enclenché, le nombre d'itérations est contournés et la valeur
 de fréquence est déterminé par le paramètre d'entré de la fonction (le vcf). Si l'un des deux boutons n'est
@@ -163,8 +165,9 @@ enclenché, le comportement reste le même et la même note est envoyé au vco. 
 enclenché, chacune des notes doivent maintenant etre joué correctement. Pour ce faire, la fonction détermine
 le nombre de case de buffer à remplir selon le potentiomètre du tempo. La fonction permet ensuite de gérer le 
 cas où la chanson doit jouer en boucle et finalement donné la valeur de la fréquence de la note a la fonction 
-setNoteHz() qui est ensuite utilisé dans le vco. Les queues sont encore utilisé dans cette fonction afin de 
-faciliter l'accès à des variables dans plusieurs fonctions tout en les gardant "thread safe"
+setNoteHz() qui est ensuite utilisé dans le vco. Dans cette fonction, les valeurs des queues sont réassignés
+grâce à xQeuePeek(). Cela permet de lire la dernière valeur obtenu selon la lecture des capteurs tout en restant
+thread safe.
 */
 int8_t nextSample()
 {
