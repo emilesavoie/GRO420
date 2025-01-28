@@ -96,18 +96,15 @@ void setNoteHz(float note)
 /*
 La fonction processVCF demeure presque identique à l'exeption qu'une partie des calculs se trouvent
 maintenant dans la tâche readPotentiometer(). Pour avoir accès au données en temps réel, la fonction
-utilise xQueuePeeke() qui permet de réatitrer les valeurs les plus récents aux éléments de la structs.
- Sinon, les anciennes valeurs sont utilisés. Cette utilisation
-permet de diminuer les calculs et facilement accéder aux valeurs nécéssaire pour une fonction qui est
-appelé à une haute fréquence tel que celle-ci
+utilise xQueueReceive() qui permet de réatitrer les valeurs les plus récents aux éléments de la structs.
+Si les valeurs restent inchangés, les anciennes valeurs sont utilisés. Cette utilisationpermet de 
+diminuer les calculs et facilement accéder aux valeurs nécéssaire pour une fonction qui estappelé à une 
+haute fréquence tel que celle-ci
 */
 int8_t processVCF(int8_t input)
 {
     static int8_t y1 = 0;
     static int8_t y2 = 0;
-
-    // if(xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0))
-    // {}
 
     float b1 = sFilterCoeffs.b1;
     float a1 = sFilterCoeffs.a1;
@@ -134,12 +131,6 @@ plus enclenché, la chute débute. Une fois le nombre d'itérations complété, 
 */
 int8_t processVCA(int8_t input)
 {
-    // if(xQueueReceive(potDataQueue, &sPotentiometerData, 0))
-    // {}
-
-    // if(xQueueReceive(switchDataQueue, &sSwitchData, 0))
-    // {}
-
     float bufferIterations = sPotentiometerData.vcaLength * 8000;
     static float iteration = bufferIterations;
     int8_t frequencyOutput;
@@ -171,18 +162,17 @@ La fonction nextSample() a grandement été modifié pour gérer le cas de la m�
 enclenché, le comportement reste le même et la même note est envoyé au vco. Par contre, si le bouton sw2 est
 enclenché, chacune des notes doivent maintenant etre joué correctement. Pour ce faire, la fonction détermine
 le nombre de case de buffer à remplir selon le potentiomètre du tempo. La fonction permet ensuite de gérer le 
-cas où la chanson doit jouer en boucle et finalement
-donné la valeur de la fréquence de la note a la fonction setNoteHz() qui est ensuite utilisé dans le vco. Les
-queues sont encore utilisé dans cette fonction afin de faciliter l'accès à des variables dans plusieurs
-fonctions tout en les gardant "thread safe"
+cas où la chanson doit jouer en boucle et finalement donné la valeur de la fréquence de la note a la fonction 
+setNoteHz() qui est ensuite utilisé dans le vco. Les queues sont encore utilisé dans cette fonction afin de 
+faciliter l'accès à des variables dans plusieurs fonctions tout en les gardant "thread safe"
 */
 int8_t nextSample()
 {
     int8_t vco;
-    xQueueReceive(filterCoeffsQueue, &sFilterCoeffs, 0);
-    xQueueReceive(potDataQueue, &sPotentiometerData, 0);
 
-    xQueueReceive(switchDataQueue, &sSwitchData, 0);
+    xQueuePeek(filterCoeffsQueue, &sFilterCoeffs, 0);
+    xQueuePeek(potDataQueue, &sPotentiometerData, 0);
+    xQueuePeek(switchDataQueue, &sSwitchData, 0);
 
     if (sSwitchData.sw1)
     {
@@ -293,7 +283,7 @@ void readPotentiometer(void *pvParameters __attribute__((unused)))
         xQueueOverwrite(potDataQueue, &sPotentiometerDataLocal);
         xQueueOverwrite(filterCoeffsQueue, &sFilterCoeffsLocal);
 
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelayUntil(100 / portTICK_PERIOD_MS);
     }
 }
 
